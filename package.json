@@ -1,0 +1,20 @@
+{
+  "name": "markslide",
+  "version": "0.1.0",
+  "description": "Marp Markdown to HTML and an editable PPTX that look the same",
+  "type": "module",
+  "bin": { "markslide": "cli.mjs" },
+  "scripts": {
+    "markslide": "node cli.mjs",
+    "test": "node --test test/markslide.test.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@marp-team/marp-core": "^4.4.0",
+    "playwright": "^1.60.0",
+    "pptxgenjs": "^4.0.1"
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1"
+  }
+}

@@ -1,0 +1,240 @@
+/* @theme academic */
+/*
+ * markslide template: academic. CSS in form, but the PPTX is drawn from it too.
+ *
+ * The look of the academic theme (kaisugi/marp-theme-academic, MIT; gaia underneath), rewritten so every
+ * property in it is one a PowerPoint slide can also draw. markslide measures the slide
+ * Chrome laid out and rebuilds it in PPTX, so a property PowerPoint has no equivalent for
+ * (a gradient, a shadow, a text stroke, a web font) would make the two files disagree.
+ * What was dropped from the original and why:
+ *   - gaia's diagonal background gradient: academic already turns it off (background-image: none).
+ *   - the Google Fonts @imports: PowerPoint cannot load a web font, and a substituted font
+ *     wraps lines elsewhere. The same faces are named here and read from the machine:
+ *     Noto Sans JP ships with Windows 11; Source Code Pro does not, so code falls back to
+ *     Consolas wherever it is not installed (markslide tells the PPTX the face Chrome used).
+ *   - -webkit-text-stroke on bold lead headings: no PPTX equivalent; plain bold instead.
+ *   - blockquote's decorative quote marks, list markers and the ::after page number: a
+ *     pseudo-element cannot be measured, so markslide writes them as real elements
+ *     (.ms-marker, .ms-page) and this file styles those.
+ *   - letter-spacing 1.25px: kept, PPTX has character spacing.
+ */
+
+section {
+  --color-background: #fff;
+  --color-foreground: #333;
+  --color-highlight: #0b8bee;
+  --color-dimmed: #6a7a7d;
+  --color-stripe: rgba(69, 90, 100, 0.1);
+  --fw: 1;
+
+  width: 1280px;
+  height: 720px;
+  box-sizing: border-box;
+  padding: 90px 40px 70px;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: "Noto Sans JP", sans-serif;
+  font-weight: 400;
+  font-size: 20pt;
+  line-height: 1.35;
+  letter-spacing: 1.25px;
+  overflow-wrap: break-word;
+  position: relative;
+}
+
+h1, h2, h3, h4, h5, h6 { margin: 0.5em 0 0; font-weight: 700; }
+h1 strong, h2 strong, h3 strong, h4 strong, h5 strong, h6 strong {
+  font-weight: inherit;
+  color: var(--color-highlight);
+}
+h1 { font-size: 1.8em; }
+h2 { font-size: 1.5em; }
+h3 { font-size: 1.3em; }
+h4 { font-size: 1.1em; }
+h5 { font-size: 1em; }
+h6 { font-size: 0.9em; }
+
+p { margin: 1em 0 0; }
+section > :first-child, section > header:first-child + * { margin-top: 0; }
+
+a, mark { color: var(--color-highlight); text-decoration: none; }
+mark { background: transparent; }
+strong { font-weight: 700; }
+
+/* Lists: the marker is a real element (.ms-marker), so PPTX can place it where Chrome did.
+   A bullet is a shape measure.js sizes from the font (Chrome's own disc); a number is text. */
+/* gaia leaves a list's box to the browser: 1em above and below, 40px of indent, none nested. */
+ul, ol { margin: 1em 0; padding-left: 40px; list-style: none; }
+li ul, li ol { margin: 0; }
+li { position: relative; margin: 0.3em 0 0; }
+li > p { margin: 0.6em 0 0; }
+ul ul, ol ul, ul ol, ol ol { font-size: 0.9em; }
+.ms-marker {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  white-space: pre;
+  font-weight: 400;
+  color: var(--color-foreground);
+}
+
+code {
+  display: inline-block;
+  font-family: "Source Code Pro", Consolas, monospace;
+  font-size: 0.8em;
+  letter-spacing: 0;
+  margin: -0.1em 0.15em;
+  padding: 0.1em 0.2em;
+  background: var(--color-dimmed);
+  color: var(--color-background);
+}
+pre {
+  display: block;
+  margin: 1em 0 0;
+  background: var(--color-foreground);
+  white-space: pre;
+}
+pre code {
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.5em;
+  font-size: 0.7em;
+  background: transparent;
+}
+
+table { border-spacing: 0; border-collapse: collapse; margin: 1em 0 0; }
+th, td {
+  padding: 0.2em 0.4em;
+  border: 1px solid var(--color-foreground);
+}
+thead th { background: var(--color-foreground); color: var(--color-background); }
+tbody > tr:nth-child(odd) > td, tbody > tr:nth-child(odd) > th {
+  background: var(--color-stripe);
+}
+
+/* The citation band: academic pins every blockquote to the slide's foot. */
+blockquote {
+  position: absolute;
+  bottom: 20px;
+  max-width: 90%;
+  margin: 0;
+  padding: 0 1em;
+  border-top: 0.1em dashed #555;
+  font-size: 60%;
+}
+blockquote > :first-child { margin-top: 0; }
+
+header, footer, .ms-page {
+  position: absolute;
+  box-sizing: border-box;
+  height: 70px;
+  padding: 10px 25px;
+  line-height: 50px;
+  font-size: 66%;
+  overflow: hidden;
+}
+header, footer { left: 0; right: 0; }
+header {
+  top: 0;
+  background: var(--color-highlight);
+  color: #fff;
+  font-size: 1em;
+  font-weight: 700;
+}
+footer { bottom: 0; color: var(--color-dimmed); }
+.ms-page { right: 0; bottom: 0; font-size: 80%; font-weight: 700; }
+section::after { display: none !important; }
+
+img[alt~="center"] { display: block; margin: 0 auto; }
+
+/* Title slide */
+section.lead {
+  display: flex;
+  flex-flow: column nowrap;
+  justify-content: center;
+  align-items: stretch;
+}
+section.lead h1, section.lead h2, section.lead h3,
+section.lead h4, section.lead h5 { color: var(--color-highlight); text-align: left; }
+section.lead p { text-align: right; }
+
+.text-xl { font-size: 1.25em; }
+.text-lg { font-size: 1.125em; }
+.text-sm { font-size: 0.875em; }
+.text-xs { font-size: 0.75em; }
+
+/* Layout helpers, as in the original */
+.flex { display: flex; gap: 1em; }
+.sa { justify-content: space-around; }
+.sb { justify-content: space-between; }
+.sa div, .sb div { margin: 0.1em; }
+.fw div { flex: var(--fw); }
+
+/*
+ * House style. These rules used to sit in a <style> at the top of every deck (the slides
+ * that use this theme carried them, so that a VS Code without the theme still laid out):
+ * moved here so a deck holds only its words. They come last so they win over the theme's.
+ */
+section { padding: 56px 40px 40px; font-size: 19pt; }
+section:not(.lead) h2 {
+  font-size: 28pt;
+  margin: 0 0 14px;
+  padding-bottom: 6px;
+  border-bottom: 3px solid #0b8bee;
+}
+h4 { font-size: 19pt; color: #0b8bee; margin: 12px 0 4px; }
+.flex > div > h4:first-child { margin-top: 0; }
+strong { color: #c0392b; }
+ul { margin: 0; padding-left: 1em; }
+li { margin-bottom: 4px; }
+/* Tables keep the theme's colours; only the spacing is tighter. */
+table { font-size: 15pt; width: 100%; }
+th, td { padding: 3px 8px; }
+img, video { display: block; margin: 0 auto; }
+
+/* Columns. Same names as the theme's .flex/.fw. */
+.flex { display: flex; gap: 18px; align-items: flex-start; }
+.flex > div { flex: 1; min-width: 0; }
+.wide > div:first-child { flex: 1.5; }
+.narrow > div:first-child { flex: 0.5; }
+
+/* The citation band, where the theme puts a blockquote, clear of the page number. */
+blockquote {
+  position: absolute;
+  bottom: 12px;
+  line-height: 1.25;
+  left: 40px;
+  right: 105px;
+  max-width: none;
+  margin: 0;
+  padding: 5px 0 0;
+  border-top: 1px dashed #888;
+  font-size: 11pt;
+  color: #555;
+}
+blockquote p { margin: 0; }
+
+.note {
+  border-left: 5px solid #0b8bee;
+  background: #f2f8fd;
+  padding: 8px 12px;
+  font-size: 15pt;
+}
+.note.warn { border-left-color: #c0392b; background: #fdf3f2; }
+.note p:first-child { margin-top: 0; }
+.note p:last-child { margin-bottom: 0; }
+.cap { font-size: 12pt; color: #555; margin-top: 4px; }
+/* The arrow between two equations of a derivation. */
+.mid { text-align: center; color: #0b8bee; font-size: 16pt; margin: 2px 0; }
+/* The symbol list right under an equation. */
+.sym { font-size: 14pt; color: #333; margin: 2px 0 10px; line-height: 1.75; }
+.sym p { margin: 0; }
+/* Display maths sat too far from the text around it. */
+.katex-display { margin: 0.3em 0 !important; }
+.sm .katex-display > .katex, .cap .katex-display > .katex { font-size: 0.95em; }
+.sm { font-size: 15pt; }
+/* A boxed quantity in an equation: yellow at 1px vanishes on white. */
+.katex .fcolorbox { border-width: 2px !important; }
+/* Citation numbers */
+sup { font-size: 0.65em; }
