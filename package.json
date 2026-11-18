@@ -6,7 +6,7 @@
   "bin": { "markslide": "cli.mjs" },
   "scripts": {
     "markslide": "node cli.mjs",
-    "test": "node --test test/markslide.test.mjs"
+    "test": "node --test test/markslide.test.mjs test/deck.test.mjs"
   },
   "license": "MIT",
   "dependencies": {

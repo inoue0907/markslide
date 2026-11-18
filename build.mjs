@@ -33,27 +33,8 @@ export async function layoutDeck(markdown, { deckDir, browser, shots = false }) 
   try {
     await page.goto(pathToFileURL(pagePath).href, { waitUntil: "load" });
     await page.addScriptTag({ path: join(here, "measure.js") });
-    await page.evaluate(() => window.__markslide.prepare());
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      await Promise.all([...document.images].map((i) => i.decode().catch(() => {})));
-    });
-    const slides = await page.evaluate(() => window.__markslide.measure());
-
-    const assets = new Map();
+    const { slides, assets } = await measureOpenPage(page);
     const sectionsEl = await page.$$("div.marpit > section");
-    for (const m of slides) {
-      for (const p of m.pictures) {
-        if (p.kind === "raster") {
-          const el = await page.$(`[data-ms-raster="${p.id}"]`);
-          const png = await el.screenshot({ omitBackground: true, type: "png" });
-          assets.set(p.id, `image/png;base64,${png.toString("base64")}`);
-        } else if (!assets.has(p.src)) {
-          const data = await readImage(p.src);
-          if (data) assets.set(p.src, data);
-        }
-      }
-    }
     let shotsOut = null;
     if (shots) {
       shotsOut = [];
@@ -78,7 +59,35 @@ export async function layoutDeck(markdown, { deckDir, browser, shots = false }) 
   }
 }
 
-async function readImage(src) {
+/**
+ * Measure the slides of a page already open in Chrome with measure.js loaded: markers made
+ * real, every slide read back, rasters photographed and images read. Shared by the Marp path
+ * and the HTML deck, which differ only in where their sections are.
+ */
+export async function measureOpenPage(page) {
+  await page.evaluate(() => window.__markslide.prepare());
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all([...document.images].map((i) => i.decode().catch(() => {})));
+  });
+  const slides = await page.evaluate(() => window.__markslide.measure());
+  const assets = new Map();
+  for (const m of slides) {
+    for (const p of m.pictures) {
+      if (p.kind === "raster") {
+        const el = await page.$(`[data-ms-raster="${p.id}"]`);
+        const png = await el.screenshot({ omitBackground: true, type: "png" });
+        assets.set(p.id, `image/png;base64,${png.toString("base64")}`);
+      } else if (!assets.has(p.src)) {
+        const data = await readImage(p.src);
+        if (data) assets.set(p.src, data);
+      }
+    }
+  }
+  return { slides, assets };
+}
+
+export async function readImage(src) {
   try {
     if (src.startsWith("data:")) return src.slice(5);
     if (src.startsWith("file:")) {
