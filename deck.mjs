@@ -254,7 +254,8 @@ export async function checkDeck(path, { browser, id } = {}) {
           cite: T.CITE_MAX, note: T.NOTE_MAX, symbols: T.SYMBOL_MAX },
       });
       const problems = found.filter((p) => !id || p.id === id).map((p) => `${p.id} ${p.type}: ${p.text}`);
-      return { problems, pages: found.pages, missing: synced.missing };
+      const pages = await page.evaluate(() => document.querySelectorAll("main[data-theme] > section").length);
+      return { problems, pages, missing: synced.missing };
     } finally {
       await page.close();
     }
