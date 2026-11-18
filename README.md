@@ -23,7 +23,7 @@ Marp の Markdown から直接書き出す使い方も残してある（`node cl
 ファイルは2つに分かれる。前半はスライドそのもので、AI と人が書く。後半は markslide が書き、手では直さない。
 
 ```html
-<main data-theme="academic" data-paginate data-header="研究室ゼミ">
+<main data-theme="academic" data-paginate>
 <section id="s1" data-type="表紙">
   <h1>タイトル</h1>
   <aside class="notes">話す内容</aside>
