@@ -102,3 +102,46 @@ test("the PPTX is measured from the HTML deck, with each page's notes", (t) => w
   // The notes are said in the notes pane, not drawn on the slide.
   assert.doesNotMatch(await zip.file("ppt/slides/slide1.xml").async("string"), /表紙のノート/)
 }))
+
+test("the deck is read as one column or one slide at a time, and the choice never reaches the file", (t) => withDeck(t, async (browser, dir) => {
+  const { written } = await deck.importMarkdown(sample, { out: join(dir, "a.html"), browser })
+  const text = readFileSync(written, "utf8")
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(pathToFileURL(written).href)
+    await page.waitForFunction(() => window.__msReady === true)
+    const shown = () => page.evaluate(() => window.__ms.sections()
+      .filter((s) => s.getBoundingClientRect().height > 0).map((s) => s.id))
+    assert.deepEqual(await shown(), ["s1", "s2", "s3", "s4"])
+
+    await page.click(".ms-toolbar [data-act=view]")
+    assert.deepEqual(await shown(), ["s1"])
+    // The one slide fits the window's height as well as its width.
+    const box = await page.locator("#s1").boundingBox()
+    assert.ok(box.y >= 0 && box.y + box.height <= 700, JSON.stringify(box))
+
+    await page.keyboard.press("ArrowRight")
+    assert.deepEqual(await shown(), ["s2"])
+    await page.mouse.move(500, 350)
+    await page.mouse.wheel(0, 120)
+    assert.deepEqual(await shown(), ["s3"])
+    await page.keyboard.press("End")
+    assert.deepEqual(await shown(), ["s4"])
+    assert.equal(await page.locator(".ms-count").textContent(), "4 / 4")
+    assert.equal(await page.evaluate(() => window.__ms.serialize()), deck.mainText(text))
+
+    // The choice is the browser's: a reload comes back to the same slide, one at a time.
+    await page.reload()
+    await page.waitForFunction(() => window.__msReady === true)
+    assert.deepEqual(await shown(), ["s4"])
+
+    await page.click(".ms-toolbar [data-act=view]")
+    assert.deepEqual(await shown(), ["s1", "s2", "s3", "s4"])
+    await page.waitForFunction(() => {
+      const r = document.getElementById("s4").getBoundingClientRect()
+      return r.top < innerHeight && r.bottom > 0
+    })
+  } finally {
+    await page.close()
+  }
+}))

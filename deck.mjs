@@ -75,6 +75,16 @@ html.ms-editing main [contenteditable="true"]:focus { outline: 2px solid #0b8bee
   padding: 6px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 13px sans-serif;
 }
 .ms-toolbar button { font: inherit; padding: 4px 10px; cursor: pointer; }
+.ms-count { min-width: 4em; text-align: center; font-variant-numeric: tabular-nums; }
+@media screen {
+  html:not(.ms-measure) { scroll-behavior: smooth; }
+  html.ms-single, html.ms-single body { height: 100%; overflow: hidden; }
+  html.ms-single main[data-theme] { min-height: 100%; box-sizing: border-box; justify-content: center; padding: 56px 0 16px; }
+  html.ms-single main[data-theme] > section:not([data-ms-current]),
+  html.ms-single main[data-theme] > section:not([data-ms-current]) + .ms-notes-box { display: none; }
+  html.ms-single main[data-theme] > section[data-ms-current] { animation: ms-turn 0.18s ease-out; }
+}
+@keyframes ms-turn { from { opacity: 0; } to { opacity: 1; } }
 html.ms-measure main[data-theme] { display: block; padding: 0; }
 html.ms-measure main[data-theme] > section { zoom: 1; margin: 0 0 20px; }
 @media print {

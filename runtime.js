@@ -17,7 +17,7 @@ window.__ms = (() => {
     "TH", "TD", "P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "ASIDE", "FIGURE",
     "FIGCAPTION", "IMG", "VIDEO", "HEADER", "FOOTER", "PRE"]);
   const RUNTIME_ATTRS = ["contenteditable", "spellcheck", "data-ms-tex", "data-ms-raster",
-    "data-marpit-pagination", "data-marpit-pagination-total"];
+    "data-marpit-pagination", "data-marpit-pagination-total", "data-ms-current"];
 
   const json = (id) => {
     const el = document.getElementById(id);
@@ -150,8 +150,136 @@ window.__ms = (() => {
   }
 
   function fit() {
-    const w = Math.min(1280, document.documentElement.clientWidth - 32);
-    document.documentElement.style.setProperty("--ms-zoom", String(Math.max(0.2, w / 1280)));
+    const root = document.documentElement;
+    let zoom = Math.min(1280, root.clientWidth - 32) / 1280;
+    // One slide at a time is the whole screen's: it fits the height too, under the toolbar
+    // and above its notes box while editing.
+    if (single) {
+      const spare = root.classList.contains("ms-editing") ? 160 : 80;
+      zoom = Math.min(zoom, (root.clientHeight - spare) / 720);
+    }
+    root.style.setProperty("--ms-zoom", String(Math.max(0.2, zoom)));
+  }
+
+  // ---- viewing ------------------------------------------------------------------------------
+  // Two ways to look: every slide in one column scrolled smoothly, or one slide at a time
+  // turned like pages. The choice is this browser's (localStorage), never the file's.
+  const VIEW_KEY = "markslide.view";
+  let single = false;
+  let current = 0;
+  let counter = null;
+  let lastTurn = 0;
+
+  function nearest() {
+    const mid = innerHeight / 2;
+    let best = 0;
+    let gap = Infinity;
+    sections().forEach((s, i) => {
+      const r = s.getBoundingClientRect();
+      const d = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (d < gap) { gap = d; best = i; }
+    });
+    return best;
+  }
+
+  function count() {
+    if (counter) counter.textContent = `${current + 1} / ${sections().length}`;
+  }
+
+  /** Go to slide i: shown alone, or scrolled to smoothly in the column. */
+  function go(i, smooth = true) {
+    const all = sections();
+    if (!all.length) return;
+    current = Math.max(0, Math.min(all.length - 1, i));
+    all.forEach((s, k) => s.toggleAttribute("data-ms-current", k === current));
+    if (single) scrollTo(0, 0);
+    else all[current].scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+    count();
+    // A sandboxed frame (the Wrapper's review) may refuse to touch history.
+    try { history.replaceState(null, "", `#${all[current].id}`); } catch { /* not ours */ }
+  }
+
+  function setSingle(on) {
+    const at = single ? current : nearest();
+    single = on;
+    document.documentElement.classList.toggle("ms-single", on);
+    try { localStorage.setItem(VIEW_KEY, on ? "single" : "scroll"); } catch { /* no storage */ }
+    const btn = document.querySelector(".ms-toolbar [data-act=view]");
+    if (btn) btn.textContent = on ? "連続で見る" : "1枚ずつ見る";
+    fit();
+    go(at, false);
+  }
+
+  function typing(t) {
+    return t instanceof Element && !!t.closest("[contenteditable]:not([contenteditable=false]), input, textarea, select");
+  }
+
+  const NEXT = new Set(["ArrowRight", "ArrowDown", "PageDown", " "]);
+  const PREV = new Set(["ArrowLeft", "ArrowUp", "PageUp"]);
+  // In the column the arrows up and down still scroll a little, as on any page.
+  const COLUMN_NEXT = new Set(["ArrowRight", "PageDown"]);
+  const COLUMN_PREV = new Set(["ArrowLeft", "PageUp"]);
+
+  function onViewKey(e) {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || typing(e.target)) return;
+    // Space on a focused toolbar button presses it; the arrows still turn the slides.
+    if (e.key === " " && e.target instanceof Element && e.target.closest("button")) return;
+    const next = single ? NEXT : COLUMN_NEXT;
+    const prev = single ? PREV : COLUMN_PREV;
+    let to = null;
+    if (next.has(e.key) && !(e.key === " " && e.shiftKey)) to = (single ? current : nearest()) + 1;
+    else if (prev.has(e.key) || (single && e.key === " " && e.shiftKey)) to = (single ? current : nearest()) - 1;
+    else if (e.key === "Home") to = 0;
+    else if (e.key === "End") to = sections().length - 1;
+    if (to === null) return;
+    e.preventDefault();
+    go(to);
+  }
+
+  // One turn per flick of the wheel: a trackpad sends dozens of events for one gesture.
+  function onWheel(e) {
+    if (!single || e.ctrlKey) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - lastTurn < 450 || Math.abs(e.deltaY) + Math.abs(e.deltaX) < 4) return;
+    lastTurn = now;
+    go(current + (e.deltaY + e.deltaX > 0 ? 1 : -1));
+  }
+
+  let touchX = null;
+  function onTouchStart(e) { touchX = single && e.touches.length === 1 ? e.touches[0].clientX : null; }
+  function onTouchEnd(e) {
+    if (touchX === null || typing(e.target)) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 50) go(current + (dx < 0 ? 1 : -1));
+  }
+
+  let ticking = false;
+  function onScroll() {
+    if (single || ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      current = nearest();
+      count();
+    });
+  }
+
+  function startView() {
+    let saved = null;
+    try { saved = localStorage.getItem(VIEW_KEY); } catch { /* no storage */ }
+    const id = decodeURIComponent(location.hash.slice(1));
+    const at = sections().findIndex((s) => s.id === id);
+    document.addEventListener("keydown", onViewKey);
+    addEventListener("wheel", onWheel, { passive: false });
+    addEventListener("touchstart", onTouchStart, { passive: true });
+    addEventListener("touchend", onTouchEnd, { passive: true });
+    addEventListener("scroll", onScroll, { passive: true });
+    current = Math.max(0, at);
+    single = true; // so setSingle starts from `current`, not from where the column lies
+    setSingle(saved === "single");
+    if (at < 0 && !single) scrollTo(0, 0);
   }
 
   // ---- editing --------------------------------------------------------------------------------
@@ -205,6 +333,7 @@ window.__ms = (() => {
     noteBoxes(on);
     const btn = document.querySelector(".ms-toolbar [data-act=edit]");
     if (btn) btn.textContent = on ? "編集を終える" : "編集";
+    fit();
   }
 
   function onKey(e) {
@@ -310,12 +439,16 @@ window.__ms = (() => {
     const bar = document.createElement("div");
     bar.className = "ms-toolbar";
     bar.setAttribute("data-ms-runtime", "");
-    bar.innerHTML = '<button type="button" data-act="edit">編集</button>' +
+    bar.innerHTML = '<span class="ms-count"></span>' +
+      '<button type="button" data-act="view">1枚ずつ見る</button>' +
+      '<button type="button" data-act="edit">編集</button>' +
       '<button type="button" data-act="save">保存 (Ctrl+S)</button><span class="ms-status"></span>';
     bar.querySelector("[data-act=edit]").onclick = () =>
       setEditing(!document.documentElement.classList.contains("ms-editing"));
     bar.querySelector("[data-act=save]").onclick = save;
+    bar.querySelector("[data-act=view]").onclick = () => setSingle(!single);
     status = bar.querySelector(".ms-status");
+    counter = bar.querySelector(".ms-count");
     document.body.append(bar);
   }
 
@@ -330,6 +463,7 @@ window.__ms = (() => {
       baseline = serialize();
       if (!document.documentElement.classList.contains("ms-measure")) {
         toolbar();
+        startView();
         document.addEventListener("keydown", onKey, true);
         document.addEventListener("paste", onPaste, true);
         document.querySelector("main[data-theme]").addEventListener("input", markDirty);
@@ -347,8 +481,8 @@ window.__ms = (() => {
     return block(clean(main).firstElementChild, 0);
   }
 
-  return { serialize, serializeSection, hydrate, sections, save, setEditing, mainOf, mainSpan,
-    MARKER, boot };
+  return { serialize, serializeSection, hydrate, sections, save, setEditing, setSingle, go,
+    mainOf, mainSpan, MARKER, boot };
 })();
 
 if (window.__msNoBoot) { /* markslide only wants serialize() */ }
