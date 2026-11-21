@@ -1,0 +1,711 @@
+// The script a deck.html carries below its runtime marker. It runs in the person's browser
+// (view, edit, save) and in markslide's Chrome (tidy, check, PPTX), so both read the deck
+// through the same functions: what `markslide sync` writes is what the browser saves.
+//
+// The deck itself is <main data-theme> holding one <section id data-type> per slide. Every
+// element this script adds for display (header, page number, list markers, rendered maths,
+// image sources, the notes box) is taken off again by serialize(), so a save changes only
+// the words the person changed and `git diff` shows exactly that.
+// Plain script, no imports: it is pasted into the deck and evaluated in Chrome as text.
+
+/* eslint-disable no-undef */
+window.__markslideSections = "main[data-theme] > section";
+window.__ms = (() => {
+  const SECTIONS = window.__markslideSections;
+  const RUNTIME = "[data-ms-runtime], .ms-marker, .ms-page";
+  const BLOCKS = new Set(["SECTION", "DIV", "UL", "OL", "LI", "TABLE", "THEAD", "TBODY", "TR",
+    "TH", "TD", "P", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "ASIDE", "FIGURE",
+    "FIGCAPTION", "IMG", "VIDEO", "HEADER", "FOOTER", "PRE"]);
+  const RUNTIME_ATTRS = ["contenteditable", "spellcheck", "data-ms-tex", "data-ms-raster",
+    "data-marpit-pagination", "data-marpit-pagination-total", "data-ms-current"];
+
+  const json = (id) => {
+    const el = document.getElementById(id);
+    try { return el ? JSON.parse(el.textContent) : {}; } catch { return {}; }
+  };
+
+  // ---- serializing ------------------------------------------------------------------------
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/ /g, "&nbsp;");
+  const escAttr = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+
+  /** The deck element as its author would write it: runtime additions off, one block a line. */
+  function clean(main) {
+    const copy = main.cloneNode(true);
+    copy.querySelectorAll(RUNTIME).forEach((e) => e.remove());
+    copy.querySelectorAll(".math[data-ms-tex]").forEach((m) => {
+      m.textContent = m.getAttribute("data-ms-tex");
+    });
+    copy.querySelectorAll("img[data-asset]").forEach((i) => i.removeAttribute("src"));
+    // An emptied item holds a <br> only so the caret has somewhere to stand.
+    copy.querySelectorAll("li > br:only-child, p > br:only-child").forEach((b) => b.remove());
+    for (const el of [copy, ...copy.querySelectorAll("*")]) {
+      for (const a of RUNTIME_ATTRS) el.removeAttribute(a);
+    }
+    return copy;
+  }
+
+  function openTag(el) {
+    const attrs = [...el.attributes].map((a) => a.value === "" && a.name !== "alt"
+      ? ` ${a.name}` : ` ${a.name}="${escAttr(a.value)}"`).join("");
+    return `<${el.tagName.toLowerCase()}${attrs}>`;
+  }
+
+  // Inline content on one line: whitespace collapsed, so a re-indented file serializes the
+  // same and a save never turns into a whitespace diff.
+  function inline(nodes) {
+    let out = "";
+    for (const n of nodes) {
+      if (n.nodeType === 3) out += esc(n.data);
+      else if (n.nodeType === 1) out += n.outerHTML;
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
+  function block(el, depth) {
+    const pad = "  ".repeat(depth);
+    const tag = el.tagName.toLowerCase();
+    if (tag === "img" || tag === "br") return pad + openTag(el);
+    // Code keeps every space and line as written.
+    if (tag === "pre") return pad + el.outerHTML;
+    // Notes keep their line breaks: they are what is said, written as plain text.
+    if (tag === "aside") return pad + openTag(el) + esc(el.textContent.trim()) + `</${tag}>`;
+    const kids = [...el.childNodes].filter((n) => n.nodeType === 1 || n.nodeType === 3);
+    if (!kids.some((n) => n.nodeType === 1 && BLOCKS.has(n.tagName))) {
+      return pad + openTag(el) + inline(kids) + `</${tag}>`;
+    }
+    const lines = [pad + openTag(el)];
+    let run = [];
+    const flush = () => {
+      const text = inline(run);
+      if (text) lines.push(pad + "  " + text);
+      run = [];
+    };
+    for (const n of kids) {
+      if (n.nodeType === 1 && BLOCKS.has(n.tagName)) {
+        flush();
+        lines.push(block(n, depth + 1));
+      } else run.push(n);
+    }
+    flush();
+    lines.push(pad + `</${tag}>`);
+    return lines.join("\n");
+  }
+
+  /** The text that stands for <main> in the file. */
+  function serialize(main = document.querySelector("main[data-theme]")) {
+    const copy = clean(main);
+    const sections = [...copy.children].filter((c) => c.tagName === "SECTION");
+    return [openTag(copy), ...sections.map((s) => block(s, 0)), "</main>"].join("\n");
+  }
+
+  // ---- display ------------------------------------------------------------------------------
+  function sections() { return [...document.querySelectorAll(SECTIONS)]; }
+
+  function hydrate() {
+    const main = document.querySelector("main[data-theme]");
+    if (!main) return;
+    const assets = json("ms-assets");
+    const maths = json("ms-math");
+    for (const img of main.querySelectorAll("img[data-asset]")) {
+      const src = assets[img.getAttribute("data-asset")];
+      if (src) img.setAttribute("src", src);
+    }
+    for (const m of main.querySelectorAll(".math")) {
+      if (m.hasAttribute("data-ms-tex")) continue;
+      const tex = m.textContent.trim();
+      const svg = maths[(m.tagName === "DIV" ? "D:" : "I:") + tex];
+      if (!svg) continue;
+      m.setAttribute("data-ms-tex", tex);
+      m.setAttribute("contenteditable", "false");
+      m.innerHTML = svg;
+    }
+    const all = sections();
+    const header = main.getAttribute("data-header");
+    const paginate = main.hasAttribute("data-paginate");
+    all.forEach((s, i) => {
+      if (header && !s.querySelector(":scope > header")) {
+        const h = document.createElement("header");
+        h.setAttribute("data-ms-runtime", "");
+        h.textContent = header;
+        s.prepend(h);
+      }
+      if (paginate && s.getAttribute("data-paginate") !== "false"
+          && !s.querySelector(":scope > .ms-page")) {
+        const p = document.createElement("span");
+        p.className = "ms-page";
+        p.textContent = `${i + 1}/${all.length}`;
+        s.append(p);
+      }
+    });
+  }
+
+  // List markers are measure.js's real elements; laid out unzoomed, as the PPTX is.
+  function markers() {
+    if (!window.__markslide) return;
+    const root = document.documentElement;
+    const had = root.classList.contains("ms-measure");
+    root.classList.add("ms-measure");
+    window.__markslide.prepare();
+    if (!had) root.classList.remove("ms-measure");
+    document.querySelectorAll(".ms-marker").forEach((m) => m.setAttribute("contenteditable", "false"));
+  }
+
+  function fit() {
+    const root = document.documentElement;
+    let zoom = Math.min(1280, root.clientWidth - 32) / 1280;
+    // One slide at a time is the whole screen's, edge to edge: the toolbar floats over it and
+    // hides while the mouse rests. Only while editing is room kept for the notes box below.
+    if (single) {
+      const editing = root.classList.contains("ms-editing");
+      zoom = Math.min(root.clientWidth / 1280, (root.clientHeight - (editing ? 120 : 0)) / 720);
+    }
+    root.style.setProperty("--ms-zoom", String(Math.max(0.2, zoom)));
+  }
+
+  // ---- viewing ------------------------------------------------------------------------------
+  // Two ways to look: every slide in one column scrolled smoothly, or one slide at a time
+  // turned like pages. The choice is this browser's (localStorage), never the file's.
+  const VIEW_KEY = "markslide.view";
+  let single = false;
+  let current = 0;
+  let counter = null;
+  let lastTurn = 0;
+
+  function nearest() {
+    const mid = innerHeight / 2;
+    let best = 0;
+    let gap = Infinity;
+    sections().forEach((s, i) => {
+      const r = s.getBoundingClientRect();
+      const d = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (d < gap) { gap = d; best = i; }
+    });
+    return best;
+  }
+
+  function count() {
+    if (counter) counter.textContent = `${current + 1} / ${sections().length}`;
+  }
+
+  /** Go to slide i: shown alone, or scrolled to smoothly in the column. */
+  function go(i, smooth = true) {
+    const all = sections();
+    if (!all.length) return;
+    current = Math.max(0, Math.min(all.length - 1, i));
+    all.forEach((s, k) => s.toggleAttribute("data-ms-current", k === current));
+    if (single) scrollTo(0, 0);
+    else all[current].scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+    count();
+    // A sandboxed frame (the Wrapper's review) may refuse to touch history.
+    try { history.replaceState(null, "", `#${all[current].id}`); } catch { /* not ours */ }
+  }
+
+  function setSingle(on) {
+    const at = single ? current : nearest();
+    single = on;
+    document.documentElement.classList.toggle("ms-single", on);
+    try { localStorage.setItem(VIEW_KEY, on ? "single" : "scroll"); } catch { /* no storage */ }
+    label("view", on ? "column" : "single");
+    fit();
+    wake();
+    go(at, false);
+  }
+
+  function typing(t) {
+    return t instanceof Element && !!t.closest("[contenteditable]:not([contenteditable=false]), input, textarea, select");
+  }
+
+  const NEXT = new Set(["ArrowRight", "ArrowDown", "PageDown", " "]);
+  const PREV = new Set(["ArrowLeft", "ArrowUp", "PageUp"]);
+  // In the column the arrows up and down still scroll a little, as on any page.
+  const COLUMN_NEXT = new Set(["ArrowRight", "PageDown"]);
+  const COLUMN_PREV = new Set(["ArrowLeft", "PageUp"]);
+
+  function onViewKey(e) {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || typing(e.target)) return;
+    // Space on a focused toolbar button presses it; the arrows still turn the slides.
+    if (e.key === " " && e.target instanceof Element && e.target.closest("button")) return;
+    const next = single ? NEXT : COLUMN_NEXT;
+    const prev = single ? PREV : COLUMN_PREV;
+    let to = null;
+    if (next.has(e.key) && !(e.key === " " && e.shiftKey)) to = (single ? current : nearest()) + 1;
+    else if (prev.has(e.key) || (single && e.key === " " && e.shiftKey)) to = (single ? current : nearest()) - 1;
+    else if (e.key === "Home") to = 0;
+    else if (e.key === "End") to = sections().length - 1;
+    if (to === null) return;
+    e.preventDefault();
+    go(to);
+  }
+
+  // One turn per flick of the wheel: a trackpad sends dozens of events for one gesture.
+  function onWheel(e) {
+    if (!single || e.ctrlKey) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - lastTurn < 450 || Math.abs(e.deltaY) + Math.abs(e.deltaX) < 4) return;
+    lastTurn = now;
+    go(current + (e.deltaY + e.deltaX > 0 ? 1 : -1));
+  }
+
+  let touchX = null;
+  function onTouchStart(e) { touchX = single && e.touches.length === 1 ? e.touches[0].clientX : null; }
+  function onTouchEnd(e) {
+    if (touchX === null || typing(e.target)) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 50) go(current + (dx < 0 ? 1 : -1));
+  }
+
+  let ticking = false;
+  function onScroll() {
+    if (single || ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      current = nearest();
+      count();
+    });
+  }
+
+  function startView() {
+    let saved = null;
+    try { saved = localStorage.getItem(VIEW_KEY); } catch { /* no storage */ }
+    const id = decodeURIComponent(location.hash.slice(1));
+    const at = sections().findIndex((s) => s.id === id);
+    document.addEventListener("keydown", onViewKey);
+    addEventListener("wheel", onWheel, { passive: false });
+    addEventListener("touchstart", onTouchStart, { passive: true });
+    addEventListener("touchend", onTouchEnd, { passive: true });
+    addEventListener("scroll", onScroll, { passive: true });
+    current = Math.max(0, at);
+    single = true; // so setSingle starts from `current`, not from where the column lies
+    setSingle(saved === "single");
+    if (at < 0 && !single) scrollTo(0, 0);
+  }
+
+  // ---- editing --------------------------------------------------------------------------------
+  // Words, and the paragraphs and items that hold them: headings, paragraphs, items, cells
+  // and notes. A page, a figure or a formula is the AI's to make, so nothing here adds one.
+  const EDITABLE = "h1, h2, h3, h4, h5, h6, p, li, th, td";
+  let baseline = null;
+  let dirty = false;
+  let handle = null;
+  let status = null;
+
+  function setStatus(text) { if (status) status.textContent = text; wake(); }
+  function markDirty() { dirty = true; setStatus("未保存の変更があります"); }
+
+  function noteBoxes(on) {
+    for (const s of sections()) {
+      let box = s.nextElementSibling;
+      if (!(box && box.classList.contains("ms-notes-box"))) {
+        if (!on) continue;
+        box = document.createElement("div");
+        box.className = "ms-notes-box";
+        box.setAttribute("data-ms-runtime", "");
+        box.setAttribute("contenteditable", "plaintext-only");
+        box.setAttribute("data-placeholder", "発表者ノート（ここに書く）");
+        const aside = s.querySelector(":scope > aside.notes");
+        box.textContent = aside ? aside.textContent.trim() : "";
+        box.addEventListener("input", () => {
+          let target = s.querySelector(":scope > aside.notes");
+          if (!target) {
+            target = document.createElement("aside");
+            target.className = "notes";
+            s.append(target);
+          }
+          target.textContent = box.innerText.replace(/\n$/, "");
+          markDirty();
+        });
+        s.after(box);
+      }
+    }
+  }
+
+  function setEditing(on) {
+    document.documentElement.classList.toggle("ms-editing", on);
+    const main = document.querySelector("main[data-theme]");
+    const roots = [...main.querySelectorAll(EDITABLE)].filter((el) =>
+      !el.parentElement.closest(EDITABLE) && !el.closest(RUNTIME));
+    for (const el of roots) {
+      if (on) { el.setAttribute("contenteditable", "true"); el.setAttribute("spellcheck", "false"); }
+      else { el.removeAttribute("contenteditable"); el.removeAttribute("spellcheck"); }
+    }
+    noteBoxes(on);
+    label("edit", on ? "done" : "edit");
+    fit();
+  }
+
+  function onKey(e) {
+    const t = e.target;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      save();
+      return;
+    }
+    if (!(t instanceof Element) || !t.closest("main [contenteditable=true]")) return;
+    if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const sel = getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    const cur = blockAt(range.startContainer);
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // A line break inside the same item, and any break in a table cell, is Shift+Enter's.
+      if (e.shiftKey || !cur || cur.tagName === "TD" || cur.tagName === "TH") {
+        document.execCommand("insertLineBreak");
+        return;
+      }
+      if (!range.collapsed) range.deleteContents();
+      split(cur, range);
+    } else if (e.key === "Backspace" && cur && range.collapsed && atStart(cur, range)) {
+      if (merge(cur)) e.preventDefault();
+    } else if (e.key === "Tab" && cur && cur.tagName === "LI") {
+      e.preventDefault();
+      if (e.shiftKey) outdent(cur);
+      else indent(cur);
+    }
+  }
+
+  // ---- structure ------------------------------------------------------------------------------
+  // Words may become more words: Enter starts the next item or paragraph, Backspace at the
+  // start of one joins it to the one before, Tab and Shift+Tab nest and un-nest an item.
+  // These cross editable roots (every top-level <li> is one), so the browser's own editing
+  // cannot do them; they are done on the DOM, and the list markers are drawn again.
+  const LISTS = new Set(["UL", "OL"]);
+  const TEXTS = "li, p, h1, h2, h3, h4, h5, h6, td, th";
+
+  function blockAt(node) {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const b = el && el.closest(TEXTS);
+    return b && b.closest("main [contenteditable=true]") ? b : null;
+  }
+
+  /** Where an item's own words end: at its nested list, if it has one. */
+  function ownEnd(el) {
+    return [...el.children].find((c) => LISTS.has(c.tagName)) || null;
+  }
+
+  function hasWords(el) {
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll(".ms-marker, ul, ol").forEach((n) => n.remove());
+    return copy.textContent.trim() !== "" || !!copy.querySelector("img, .math");
+  }
+
+  // An empty block still needs a <br>, or the caret has nowhere to stand in it.
+  function fillEmpty(el) {
+    if (hasWords(el) || [...el.childNodes].some((n) => n.nodeName === "BR")) return;
+    el.insertBefore(document.createElement("br"), ownEnd(el));
+  }
+
+  function atStart(el, range) {
+    const r = document.createRange();
+    r.setStart(el, 0);
+    r.setEnd(range.startContainer, range.startOffset);
+    const frag = r.cloneContents();
+    frag.querySelectorAll(".ms-marker").forEach((n) => n.remove());
+    return frag.textContent === "" && !frag.querySelector("img, .math");
+  }
+
+  /** An element is editable on its own only when no editable element holds it. */
+  function setRoot(el) {
+    if (!el.parentElement.closest(EDITABLE)) {
+      el.setAttribute("contenteditable", "true");
+      el.setAttribute("spellcheck", "false");
+    } else {
+      el.removeAttribute("contenteditable");
+      el.removeAttribute("spellcheck");
+    }
+  }
+
+  function caret(node, offset) {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const host = el.closest("[contenteditable=true]");
+    if (host) host.focus({ preventScroll: true });
+    const r = document.createRange();
+    r.setStart(node, offset);
+    r.collapse(true);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  /** The first place after an item's marker. */
+  function startOf(el) {
+    const kids = [...el.childNodes];
+    const i = kids.findIndex((n) => !(n.nodeType === 1 && n.classList.contains("ms-marker")));
+    if (i >= 0 && kids[i].nodeType === 3) return [kids[i], 0];
+    return [el, i >= 0 ? i : kids.length];
+  }
+
+  function redraw(section) {
+    if (section) {
+      section.querySelectorAll(".ms-marker").forEach((m) => m.remove());
+      markers();
+    }
+    markDirty();
+  }
+
+  function split(cur, range) {
+    const r = document.createRange();
+    r.setStart(range.startContainer, range.startOffset);
+    const end = ownEnd(cur);
+    if (end) r.setEndBefore(end);
+    else r.setEnd(cur, cur.childNodes.length);
+    const rest = r.extractContents();
+    // A heading goes on as a paragraph; an item or a paragraph as another of its own kind.
+    const tag = /^H\d$/.test(cur.tagName) ? "p" : cur.tagName.toLowerCase();
+    const next = document.createElement(tag);
+    next.append(rest);
+    next.querySelectorAll(".ms-marker").forEach((m) => m.remove());
+    // The nested list follows the words after the caret, so the order on screen holds.
+    for (const l of [...cur.children].filter((c) => LISTS.has(c.tagName))) next.append(l);
+    cur.after(next);
+    setRoot(next);
+    fillEmpty(cur);
+    fillEmpty(next);
+    redraw(cur.closest("section"));
+    caret(...startOf(next));
+  }
+
+  /** Backspace at a block's start. True when the key was handled (or must do nothing). */
+  function merge(cur) {
+    const own = cur.closest("[contenteditable=true]") === cur;
+    if (cur.tagName === "LI" && !cur.previousElementSibling
+        && cur.parentElement.parentElement && cur.parentElement.parentElement.tagName === "LI") {
+      outdent(cur); // the first item of a nested list leaves it, as Shift+Tab would
+      return true;
+    }
+    const prev = cur.previousElementSibling;
+    if (!prev || prev.tagName !== cur.tagName || !["LI", "P"].includes(cur.tagName)) {
+      // The browser's own Backspace here would pull words across roots in its own way.
+      return !own;
+    }
+    const at = ownEnd(prev);
+    if (!hasWords(prev)) prev.querySelectorAll(":scope > br").forEach((b) => b.remove());
+    const mark = document.createTextNode("");
+    prev.insertBefore(mark, at);
+    if (hasWords(cur)) {
+      for (const n of [...cur.childNodes]) {
+        if (n.nodeType === 1 && (n.classList.contains("ms-marker") || LISTS.has(n.tagName))) continue;
+        prev.insertBefore(n, at);
+      }
+    }
+    for (const l of [...cur.children].filter((c) => LISTS.has(c.tagName))) prev.append(l);
+    cur.remove();
+    fillEmpty(prev);
+    redraw(prev.closest("section"));
+    caret(mark, 0);
+    return true;
+  }
+
+  /** Run a move that keeps the caret where it was in the words. */
+  function keep(fn) {
+    const r = getSelection().getRangeAt(0);
+    const node = r.startContainer;
+    const offset = r.startOffset;
+    fn();
+    caret(node, offset);
+  }
+
+  function indent(cur) {
+    const prev = cur.previousElementSibling;
+    if (!prev || prev.tagName !== "LI") return;
+    keep(() => {
+      let list = [...prev.children].reverse().find((c) => LISTS.has(c.tagName));
+      if (!list) {
+        list = document.createElement(cur.parentElement.tagName.toLowerCase());
+        prev.append(list);
+      }
+      list.append(cur);
+      setRoot(cur);
+      redraw(cur.closest("section"));
+    });
+  }
+
+  function outdent(cur) {
+    const list = cur.parentElement;
+    const owner = list.parentElement;
+    if (!owner || owner.tagName !== "LI") return;
+    keep(() => {
+      const after = [];
+      for (let n = cur.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+      if (after.length) {
+        const rest = document.createElement(list.tagName.toLowerCase());
+        rest.append(...after);
+        cur.append(rest);
+      }
+      owner.after(cur);
+      if (!list.children.length) list.remove();
+      setRoot(cur);
+      redraw(cur.closest("section"));
+    });
+  }
+
+  function onPaste(e) {
+    const t = e.target instanceof Element ? e.target : e.target.parentElement;
+    if (!t || !t.closest("main [contenteditable=true]")) return;
+    e.preventDefault();
+    const text = (e.clipboardData.getData("text/plain") || "").replace(/\s*\n\s*/g, " ");
+    document.execCommand("insertText", false, text);
+  }
+
+  // ---- saving ---------------------------------------------------------------------------------
+  // Written split so this script never holds the marker itself: the first marker after the
+  // deck is the real one, and an HTML comment opener inside a <script> is a parsing hazard.
+  const MARKER = "<" + "!-- markslide:runtime ここから下は markslide が書く。手で直さない -->";
+
+  /** [start, end) of the deck's <main> in the file's text: never into the runtime below it. */
+  function mainSpan(text) {
+    const cut = text.indexOf("<" + "!-- markslide:runtime");
+    const head = cut < 0 ? text : text.slice(0, cut);
+    const start = head.search(/<main[\s>]/);
+    const end = head.lastIndexOf("</main>");
+    return start < 0 || end < start ? null : [start, end + "</main>".length];
+  }
+
+  /** The whole file, from this page: used only where the file itself cannot be read back. */
+  function wholeFile(mainText) {
+    const tail = ["ms-theme", "ms-view", "ms-assets", "ms-math", "ms-runtime"]
+      .map((id) => document.getElementById(id)).filter(Boolean).map((e) => e.outerHTML);
+    return `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n` +
+      `<meta name="viewport" content="width=device-width">\n` +
+      `<title>${esc(document.title)}</title>\n</head>\n<body>\n${mainText}\n` +
+      `${MARKER}\n${tail.join("\n")}\n</body>\n</html>\n`;
+  }
+
+  function mainOf(text) {
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    const main = doc.querySelector("main[data-theme]");
+    return main ? serialize(main) : null;
+  }
+
+  async function save() {
+    const main = serialize();
+    if (!window.showSaveFilePicker) {
+      // No File System Access (Firefox, Safari): hand the file over as a download instead.
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([wholeFile(main)], { type: "text/html" }));
+      a.download = decodeURIComponent(location.pathname.split("/").pop() || "deck.html");
+      a.click();
+      setStatus("ダウンロードしました。元のファイルと置き換えてください");
+      return;
+    }
+    try {
+      if (!handle) {
+        handle = await window.showSaveFilePicker({
+          suggestedName: decodeURIComponent(location.pathname.split("/").pop() || "deck.html"),
+          types: [{ description: "HTML", accept: { "text/html": [".html"] } }],
+        });
+      }
+      const disk = await (await handle.getFile()).text();
+      let next;
+      if (!disk.trim()) {
+        next = wholeFile(main);
+      } else {
+        // Someone (the AI) wrote the file after it was opened here: overwriting would undo
+        // their page. Stop, and let the person reload and redo the words.
+        if (mainOf(disk) !== baseline) {
+          setStatus("開いた後にファイルが変わっています。保存を止めました。再読み込みしてから直してください");
+          alert("このファイルは開いた後に書き換えられています。\n上書きすると、その変更が消えるので保存を止めました。\n再読み込みしてから、もう一度直してください。");
+          return;
+        }
+        const span = mainSpan(disk);
+        next = disk.slice(0, span[0]) + main + disk.slice(span[1]);
+      }
+      const w = await handle.createWritable();
+      await w.write(next);
+      await w.close();
+      baseline = main;
+      dirty = false;
+      setStatus(`保存しました（${new Date().toLocaleTimeString()}）`);
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      setStatus(`保存できませんでした: ${err && err.message}`);
+    }
+  }
+
+  // Drawn, not typed (Lucide's shapes); the words ride on title and aria-label.
+  const ICONS = {
+    single: ["1枚ずつ見る", '<rect width="20" height="12" x="2" y="6" rx="2"/>'],
+    column: ["連続で見る", '<path d="M3 2h18"/><rect width="18" height="12" x="3" y="6" rx="2"/><path d="M3 22h18"/>'],
+    edit: ["編集", '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'],
+    done: ["編集を終える", '<path d="M20 6 9 17l-5-5"/>'],
+    save: ["保存 (Ctrl+S)", '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'],
+  };
+
+  function label(act, icon) {
+    const btn = document.querySelector(`.ms-toolbar [data-act=${act}]`);
+    if (!btn) return;
+    const [words, shape] = ICONS[icon];
+    btn.title = words;
+    btn.setAttribute("aria-label", words);
+    btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
+  }
+
+  // One slide at a time, the toolbar (and the cursor) shows only while the mouse moves.
+  let idleTimer = null;
+  function wake() {
+    const root = document.documentElement;
+    root.classList.remove("ms-idle");
+    clearTimeout(idleTimer);
+    if (single) idleTimer = setTimeout(() => root.classList.add("ms-idle"), 2000);
+  }
+
+  function toolbar() {
+    const bar = document.createElement("div");
+    bar.className = "ms-toolbar";
+    bar.setAttribute("data-ms-runtime", "");
+    bar.innerHTML = '<span class="ms-count"></span>' +
+      '<button type="button" data-act="view"></button><button type="button" data-act="edit"></button>' +
+      '<button type="button" data-act="save"></button><span class="ms-status"></span>';
+    bar.querySelector("[data-act=edit]").onclick = () =>
+      setEditing(!document.documentElement.classList.contains("ms-editing"));
+    bar.querySelector("[data-act=save]").onclick = save;
+    bar.querySelector("[data-act=view]").onclick = () => setSingle(!single);
+    status = bar.querySelector(".ms-status");
+    counter = bar.querySelector(".ms-count");
+    document.body.append(bar);
+    label("view", "single");
+    label("edit", "edit");
+    label("save", "save");
+    addEventListener("mousemove", wake, { passive: true });
+  }
+
+  function boot() {
+    // markslide's own Chrome asks for the deck unzoomed and without the editing chrome.
+    if (window.__msMeasure) document.documentElement.classList.add("ms-measure");
+    hydrate();
+    fit();
+    addEventListener("resize", fit);
+    const go = () => {
+      markers();
+      baseline = serialize();
+      if (!document.documentElement.classList.contains("ms-measure")) {
+        toolbar();
+        startView();
+        document.addEventListener("keydown", onKey, true);
+        document.addEventListener("paste", onPaste, true);
+        document.querySelector("main[data-theme]").addEventListener("input", markDirty);
+        addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
+      }
+      window.__msReady = true;
+    };
+    document.fonts.ready.then(go, go);
+  }
+
+  /** One slide as the file writes it (for `markslide show`). */
+  function serializeSection(section) {
+    const main = document.createElement("main");
+    main.append(section.cloneNode(true));
+    return block(clean(main).firstElementChild, 0);
+  }
+
+  return { serialize, serializeSection, hydrate, sections, save, setEditing, setSingle, go,
+    mainOf, mainSpan, MARKER, boot };
+})();
+
+if (window.__msNoBoot) { /* markslide only wants serialize() */ }
+else if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => window.__ms.boot());
+else window.__ms.boot();

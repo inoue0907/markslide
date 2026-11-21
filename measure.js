@@ -41,7 +41,7 @@ window.__markslide = (() => {
   }
 
   function prepare() {
-    for (const section of document.querySelectorAll("div.marpit > section")) {
+    for (const section of document.querySelectorAll(window.__markslideSections || "div.marpit > section")) {
       for (const li of section.querySelectorAll("li")) {
         if (li.querySelector(":scope > .ms-marker")) continue;
         const list = li.parentElement;
@@ -408,7 +408,7 @@ window.__markslide = (() => {
   }
 
   function measure() {
-    return [...document.querySelectorAll("div.marpit > section")].map(measureSection);
+    return [...document.querySelectorAll(window.__markslideSections || "div.marpit > section")].map(measureSection);
   }
 
   return { prepare, measure };

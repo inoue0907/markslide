@@ -135,13 +135,12 @@ header, footer, .ms-page {
   overflow: hidden;
 }
 header, footer { left: 0; right: 0; }
-header {
-  top: 0;
-  background: var(--color-highlight);
-  color: #fff;
-  font-size: 1em;
-  font-weight: 700;
-}
+/*
+ * The original fills the header with the highlight colour. Dropped: whether the top of a
+ * slide is painted is the template's choice, never the deck's, and a deck that only named
+ * a header got a blue band across every page. A header is plain text like the footer.
+ */
+header { top: 0; color: var(--color-dimmed); }
 footer { bottom: 0; color: var(--color-dimmed); }
 .ms-page { right: 0; bottom: 0; font-size: 80%; font-weight: 700; }
 section::after { display: none !important; }

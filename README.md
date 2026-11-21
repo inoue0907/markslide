@@ -1,17 +1,54 @@
 # markslide
 
-Marp の Markdown から、見た目のそろった HTML と PPTX を書き出す。
+AI と1ページずつ書くスライドを、1つの HTML ファイルで持つ。
+そのファイルをブラウザで開けば、見ることも、文字を直して上書き保存することもできる。
+PowerPoint で欲しいときは、見た目のそろった、文字を直せる PPTX に書き出す。
 
 ```bash
 npm install
-node cli.mjs deck.md -o out/            # out/deck.html と out/deck.pptx
-node cli.mjs fidelity deck.md -o check/ # PowerPoint で開いた絵と比べる（Windows、PowerPoint 必須）
+node cli.mjs new deck.html --title "発表"      # 表紙だけの資料を作る
+node cli.mjs add deck.html --type 背景         # 型の骨組みを1ページ足す（--after s2 で位置を指定）
+node cli.mjs check deck.html                   # はみ出し・字数・使えないタグを調べる
+node cli.mjs show deck.html s3 --png           # 1ページの中身と、その絵
+node cli.mjs asset deck.html fig1 figure.png   # 画像を資料の中に入れる
+node cli.mjs pptx deck.html                    # deck.pptx を書き出す
+node cli.mjs import deck.md                    # Marp の資料を deck.html に移す
 npm test
 ```
 
+Marp の Markdown から直接書き出す使い方も残してある（`node cli.mjs deck.md -o out/`、`node cli.mjs fidelity deck.md`）。
+
+## HTML の資料
+
+ファイルは2つに分かれる。前半はスライドそのもので、AI と人が書く。後半は markslide が書き、手では直さない。
+
+```html
+<main data-theme="academic" data-paginate>
+<section id="s1" data-type="表紙">
+  <h1>タイトル</h1>
+  <aside class="notes">話す内容</aside>
+</section>
+<section id="s2" data-type="手法">
+  <h2>損失は二乗誤差の和</h2>
+  <div class="math">L = \sum_i (y_i - \hat y_i)^2</div>
+  <p>式は <span class="math">x^2</span> のように TeX で書く。画像は <img data-asset="fig1"> で呼ぶ。</p>
+</section>
+</main>
+<!-- markslide:runtime ここから下は markslide が書く。手で直さない -->
+（テーマの CSS、表示用の CSS、画像、描いた数式、ブラウザで動く仕組み）
+```
+
+- 1ページは `<section>` 1つ。`id` で呼び分け、`data-type` に型（表紙・目次・背景・課題・手法・結果・まとめ・今後）を書く。
+- 見た目はテーマのクラスだけで決める。`style` 属性や `<style>` は `check` が止める。PPTX に写せないからだ。
+- 数式は TeX のまま持つ。描いた結果は後半に入り、`sync`（`add`・`check` も中で呼ぶ）が足りない分だけ描く。
+- 発表者ノートは `<aside class="notes">`。PPTX のノートに入り、スライドには描かない。
+- `check` は Chrome でページを並べて測る。はみ出しを px で言い、字数や項目数は marp-slide-rules と同じ上限で数える。
+
+ブラウザで開くと、右上のアイコンで「1枚ずつ見る」と「連続で見る」を切り替えられる。1枚ずつのときはスライドが画面いっぱいに広がり、ツールバーはマウスを動かしたときだけ出る。 ←/→・PgUp/PgDn・ホイール・横のスワイプで1枚ずつめくり、連続のときは全ページを1列に並べて滑らかにスクロールする（←/→ で前後のページへ）。どちらで見ているかはブラウザが覚え、ファイルには書かない。右上の鉛筆のアイコンで文字を直せる。Enter で次の項目や段落を足し、行頭の Backspace で前の項目とつなぐ。Tab と Shift+Tab で項目を入れ子にしたり戻したりできる。同じ項目の中での改行は Shift+Enter で入れる。ページ・図・数式は AI が足す。ノートもスライドの下で直せる。Ctrl+S で元のファイルに上書きする（Chrome・Edge）。保存するのは前半だけで、AI が同じファイルを書き換えていたら上書きせずに止まる。保存の書式は CLI と同じなので、差分は直した行だけになる。
+
 ## 仕組み
 
-1. marp-core が Markdown をテンプレート（`templates/*.mst`）で HTML にする。
+1. HTML の資料はそのまま、Marp の Markdown は marp-core がテンプレート（`templates/*.mst`）で HTML にする。
 2. Chrome（Playwright）がそのページを並べる。この配置だけを正とする。
 3. `measure.js` が並んだ結果を読む。図形・画像・文字の行を、1文字ずつの位置まで取る。
 4. HTML は、測ったページそのものを書き出す。PPTX は、測った位置に図形・画像・テキストボックスを置く（`pptx.mjs`）。
