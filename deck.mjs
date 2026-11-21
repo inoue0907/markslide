@@ -74,12 +74,24 @@ html.ms-editing main [contenteditable="true"]:focus { outline: 2px solid #0b8bee
   position: fixed; top: 12px; right: 12px; z-index: 10; display: flex; gap: 8px; align-items: center;
   padding: 6px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 13px sans-serif;
 }
-.ms-toolbar button { font: inherit; padding: 4px 10px; cursor: pointer; }
+.ms-toolbar { transition: opacity 0.25s; }
+.ms-toolbar button {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0; cursor: pointer;
+  border: 0; border-radius: 4px; background: transparent; color: inherit;
+}
+.ms-toolbar button:hover, .ms-toolbar button:focus-visible { background: rgba(255, 255, 255, 0.18); }
+.ms-toolbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; }
+.ms-status:empty { display: none; }
 .ms-count { min-width: 4em; text-align: center; font-variant-numeric: tabular-nums; }
 @media screen {
   html:not(.ms-measure) { scroll-behavior: smooth; }
+  html.ms-single { background: #000; }
   html.ms-single, html.ms-single body { height: 100%; overflow: hidden; }
-  html.ms-single main[data-theme] { min-height: 100%; box-sizing: border-box; justify-content: center; padding: 56px 0 16px; }
+  html.ms-single main[data-theme] { min-height: 100%; box-sizing: border-box; justify-content: center; padding: 0; gap: 0; }
+  html.ms-single.ms-editing main[data-theme] { gap: 16px; padding: 8px 0; }
+  html.ms-single.ms-idle .ms-toolbar:not(:hover):not(:focus-within) { opacity: 0; }
+  html.ms-single.ms-idle, html.ms-single.ms-idle main { cursor: none; }
   html.ms-single main[data-theme] > section:not([data-ms-current]),
   html.ms-single main[data-theme] > section:not([data-ms-current]) + .ms-notes-box { display: none; }
   html.ms-single main[data-theme] > section[data-ms-current] { animation: ms-turn 0.18s ease-out; }

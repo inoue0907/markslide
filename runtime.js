@@ -152,11 +152,11 @@ window.__ms = (() => {
   function fit() {
     const root = document.documentElement;
     let zoom = Math.min(1280, root.clientWidth - 32) / 1280;
-    // One slide at a time is the whole screen's: it fits the height too, under the toolbar
-    // and above its notes box while editing.
+    // One slide at a time is the whole screen's, edge to edge: the toolbar floats over it and
+    // hides while the mouse rests. Only while editing is room kept for the notes box below.
     if (single) {
-      const spare = root.classList.contains("ms-editing") ? 160 : 80;
-      zoom = Math.min(zoom, (root.clientHeight - spare) / 720);
+      const editing = root.classList.contains("ms-editing");
+      zoom = Math.min(root.clientWidth / 1280, (root.clientHeight - (editing ? 120 : 0)) / 720);
     }
     root.style.setProperty("--ms-zoom", String(Math.max(0.2, zoom)));
   }
@@ -204,9 +204,9 @@ window.__ms = (() => {
     single = on;
     document.documentElement.classList.toggle("ms-single", on);
     try { localStorage.setItem(VIEW_KEY, on ? "single" : "scroll"); } catch { /* no storage */ }
-    const btn = document.querySelector(".ms-toolbar [data-act=view]");
-    if (btn) btn.textContent = on ? "連続で見る" : "1枚ずつ見る";
+    label("view", on ? "column" : "single");
     fit();
+    wake();
     go(at, false);
   }
 
@@ -291,7 +291,7 @@ window.__ms = (() => {
   let handle = null;
   let status = null;
 
-  function setStatus(text) { if (status) status.textContent = text; }
+  function setStatus(text) { if (status) status.textContent = text; wake(); }
   function markDirty() { dirty = true; setStatus("未保存の変更があります"); }
 
   function noteBoxes(on) {
@@ -331,8 +331,7 @@ window.__ms = (() => {
       else { el.removeAttribute("contenteditable"); el.removeAttribute("spellcheck"); }
     }
     noteBoxes(on);
-    const btn = document.querySelector(".ms-toolbar [data-act=edit]");
-    if (btn) btn.textContent = on ? "編集を終える" : "編集";
+    label("edit", on ? "done" : "edit");
     fit();
   }
 
@@ -435,14 +434,40 @@ window.__ms = (() => {
     }
   }
 
+  // Drawn, not typed (Lucide's shapes); the words ride on title and aria-label.
+  const ICONS = {
+    single: ["1枚ずつ見る", '<rect width="20" height="12" x="2" y="6" rx="2"/>'],
+    column: ["連続で見る", '<path d="M3 2h18"/><rect width="18" height="12" x="3" y="6" rx="2"/><path d="M3 22h18"/>'],
+    edit: ["編集", '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'],
+    done: ["編集を終える", '<path d="M20 6 9 17l-5-5"/>'],
+    save: ["保存 (Ctrl+S)", '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'],
+  };
+
+  function label(act, icon) {
+    const btn = document.querySelector(`.ms-toolbar [data-act=${act}]`);
+    if (!btn) return;
+    const [words, shape] = ICONS[icon];
+    btn.title = words;
+    btn.setAttribute("aria-label", words);
+    btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${shape}</svg>`;
+  }
+
+  // One slide at a time, the toolbar (and the cursor) shows only while the mouse moves.
+  let idleTimer = null;
+  function wake() {
+    const root = document.documentElement;
+    root.classList.remove("ms-idle");
+    clearTimeout(idleTimer);
+    if (single) idleTimer = setTimeout(() => root.classList.add("ms-idle"), 2000);
+  }
+
   function toolbar() {
     const bar = document.createElement("div");
     bar.className = "ms-toolbar";
     bar.setAttribute("data-ms-runtime", "");
     bar.innerHTML = '<span class="ms-count"></span>' +
-      '<button type="button" data-act="view">1枚ずつ見る</button>' +
-      '<button type="button" data-act="edit">編集</button>' +
-      '<button type="button" data-act="save">保存 (Ctrl+S)</button><span class="ms-status"></span>';
+      '<button type="button" data-act="view"></button><button type="button" data-act="edit"></button>' +
+      '<button type="button" data-act="save"></button><span class="ms-status"></span>';
     bar.querySelector("[data-act=edit]").onclick = () =>
       setEditing(!document.documentElement.classList.contains("ms-editing"));
     bar.querySelector("[data-act=save]").onclick = save;
@@ -450,6 +475,10 @@ window.__ms = (() => {
     status = bar.querySelector(".ms-status");
     counter = bar.querySelector(".ms-count");
     document.body.append(bar);
+    label("view", "single");
+    label("edit", "edit");
+    label("save", "save");
+    addEventListener("mousemove", wake, { passive: true });
   }
 
   function boot() {

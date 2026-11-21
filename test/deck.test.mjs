@@ -135,6 +135,13 @@ test("the deck is read as one column or one slide at a time, and the choice neve
     await page.waitForFunction(() => window.__msReady === true)
     assert.deepEqual(await shown(), ["s4"])
 
+    // One at a time the slide fills the window, and the toolbar hides until the mouse moves.
+    assert.ok(Math.abs((await page.locator("#s4").boundingBox()).width - 1000) < 2)
+    assert.equal(await page.getAttribute(".ms-toolbar [data-act=view]", "aria-label"), "連続で見る")
+    await page.waitForFunction(() => document.documentElement.classList.contains("ms-idle"), null, { timeout: 4000 })
+    await page.mouse.move(300, 300)
+    assert.equal(await page.evaluate(() => document.documentElement.classList.contains("ms-idle")), false)
+
     await page.click(".ms-toolbar [data-act=view]")
     assert.deepEqual(await shown(), ["s1", "s2", "s3", "s4"])
     await page.waitForFunction(() => {
