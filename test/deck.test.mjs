@@ -152,3 +152,62 @@ test("the deck is read as one column or one slide at a time, and the choice neve
     await page.close()
   }
 }))
+
+test("Enter starts the next item, Tab nests it, Backspace joins it back, and the file follows", (t) => withDeck(t, async (browser, dir) => {
+  const { written } = await deck.importMarkdown(sample, { out: join(dir, "a.html"), browser })
+  const text = readFileSync(written, "utf8")
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(pathToFileURL(written).href)
+    await page.waitForFunction(() => window.__msReady === true)
+    // The caret at the end of the first item's words.
+    await page.evaluate(() => {
+      window.__ms.setEditing(true)
+      const li = document.querySelector("#s2 ul > li")
+      const words = [...li.childNodes].filter((n) => n.nodeType === 3).pop()
+      li.focus()
+      const r = document.createRange()
+      r.setStart(words, words.data.length)
+      getSelection().removeAllRanges()
+      getSelection().addRange(r)
+    })
+    const items = () => page.evaluate(() => [...document.querySelectorAll("#s2 ul > li")].map((li) => {
+      const c = li.cloneNode(true)
+      c.querySelectorAll(".ms-marker, ul, ol").forEach((n) => n.remove())
+      return c.textContent.trim()
+    }))
+    await page.keyboard.press("Enter")
+    await page.keyboard.type("新しい項目")
+    assert.deepEqual((await items()).slice(0, 2), ["Marp の HTML は Chrome で正確に描ける", "新しい項目"])
+    // The new item has a marker of its own, and the marker is never saved.
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#s2 ul > li")[1]
+      .querySelectorAll(":scope > .ms-marker").length), 1)
+    assert.match(await page.evaluate(() => window.__ms.serialize()), /\n {4}<li>新しい項目<\/li>\n/)
+
+    await page.keyboard.press("Tab")
+    const nested = await page.evaluate(() => window.__ms.serialize())
+    assert.match(nested, /<li>\n\s+Marp の HTML は Chrome で正確に描ける\n\s+<ul>\n\s+<li>新しい項目<\/li>\n\s+<\/ul>/)
+    await page.keyboard.press("Shift+Tab")
+    await page.keyboard.press("Home")
+    await page.keyboard.press("Backspace")
+    assert.deepEqual((await items())[0], "Marp の HTML は Chrome で正確に描ける新しい項目")
+    for (let i = 0; i < "新しい項目".length; i++) await page.keyboard.press("Delete")
+    assert.equal(await page.evaluate(() => window.__ms.serialize()), deck.mainText(text))
+
+    // Enter in a heading goes on as a paragraph.
+    await page.evaluate(() => {
+      const h = document.querySelector("#s2 h1")
+      h.focus()
+      const r = document.createRange()
+      r.selectNodeContents(h)
+      r.collapse(false)
+      getSelection().removeAllRanges()
+      getSelection().addRange(r)
+    })
+    await page.keyboard.press("Enter")
+    await page.keyboard.type("補足")
+    assert.match(await page.evaluate(() => window.__ms.serialize()), /<\/h1>\n\s+<p>補足<\/p>/)
+  } finally {
+    await page.close()
+  }
+}))

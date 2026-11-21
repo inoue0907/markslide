@@ -37,6 +37,8 @@ window.__ms = (() => {
       m.textContent = m.getAttribute("data-ms-tex");
     });
     copy.querySelectorAll("img[data-asset]").forEach((i) => i.removeAttribute("src"));
+    // An emptied item holds a <br> only so the caret has somewhere to stand.
+    copy.querySelectorAll("li > br:only-child, p > br:only-child").forEach((b) => b.remove());
     for (const el of [copy, ...copy.querySelectorAll("*")]) {
       for (const a of RUNTIME_ATTRS) el.removeAttribute(a);
     }
@@ -283,8 +285,8 @@ window.__ms = (() => {
   }
 
   // ---- editing --------------------------------------------------------------------------------
-  // Only words: headings, paragraphs, items, cells and notes. A page, a figure or a formula
-  // is the AI's to make, so nothing here can add or delete one.
+  // Words, and the paragraphs and items that hold them: headings, paragraphs, items, cells
+  // and notes. A page, a figure or a formula is the AI's to make, so nothing here adds one.
   const EDITABLE = "h1, h2, h3, h4, h5, h6, p, li, th, td";
   let baseline = null;
   let dirty = false;
@@ -343,12 +345,202 @@ window.__ms = (() => {
       return;
     }
     if (!(t instanceof Element) || !t.closest("main [contenteditable=true]")) return;
-    // Enter would make a new paragraph or item, which is a structural change: a line break
-    // inside the same one is Shift+Enter.
-    if (e.key === "Enter" && !e.isComposing) {
+    if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const sel = getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    const cur = blockAt(range.startContainer);
+    if (e.key === "Enter") {
       e.preventDefault();
-      if (e.shiftKey) document.execCommand("insertLineBreak");
+      // A line break inside the same item, and any break in a table cell, is Shift+Enter's.
+      if (e.shiftKey || !cur || cur.tagName === "TD" || cur.tagName === "TH") {
+        document.execCommand("insertLineBreak");
+        return;
+      }
+      if (!range.collapsed) range.deleteContents();
+      split(cur, range);
+    } else if (e.key === "Backspace" && cur && range.collapsed && atStart(cur, range)) {
+      if (merge(cur)) e.preventDefault();
+    } else if (e.key === "Tab" && cur && cur.tagName === "LI") {
+      e.preventDefault();
+      if (e.shiftKey) outdent(cur);
+      else indent(cur);
     }
+  }
+
+  // ---- structure ------------------------------------------------------------------------------
+  // Words may become more words: Enter starts the next item or paragraph, Backspace at the
+  // start of one joins it to the one before, Tab and Shift+Tab nest and un-nest an item.
+  // These cross editable roots (every top-level <li> is one), so the browser's own editing
+  // cannot do them; they are done on the DOM, and the list markers are drawn again.
+  const LISTS = new Set(["UL", "OL"]);
+  const TEXTS = "li, p, h1, h2, h3, h4, h5, h6, td, th";
+
+  function blockAt(node) {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const b = el && el.closest(TEXTS);
+    return b && b.closest("main [contenteditable=true]") ? b : null;
+  }
+
+  /** Where an item's own words end: at its nested list, if it has one. */
+  function ownEnd(el) {
+    return [...el.children].find((c) => LISTS.has(c.tagName)) || null;
+  }
+
+  function hasWords(el) {
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll(".ms-marker, ul, ol").forEach((n) => n.remove());
+    return copy.textContent.trim() !== "" || !!copy.querySelector("img, .math");
+  }
+
+  // An empty block still needs a <br>, or the caret has nowhere to stand in it.
+  function fillEmpty(el) {
+    if (hasWords(el) || [...el.childNodes].some((n) => n.nodeName === "BR")) return;
+    el.insertBefore(document.createElement("br"), ownEnd(el));
+  }
+
+  function atStart(el, range) {
+    const r = document.createRange();
+    r.setStart(el, 0);
+    r.setEnd(range.startContainer, range.startOffset);
+    const frag = r.cloneContents();
+    frag.querySelectorAll(".ms-marker").forEach((n) => n.remove());
+    return frag.textContent === "" && !frag.querySelector("img, .math");
+  }
+
+  /** An element is editable on its own only when no editable element holds it. */
+  function setRoot(el) {
+    if (!el.parentElement.closest(EDITABLE)) {
+      el.setAttribute("contenteditable", "true");
+      el.setAttribute("spellcheck", "false");
+    } else {
+      el.removeAttribute("contenteditable");
+      el.removeAttribute("spellcheck");
+    }
+  }
+
+  function caret(node, offset) {
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const host = el.closest("[contenteditable=true]");
+    if (host) host.focus({ preventScroll: true });
+    const r = document.createRange();
+    r.setStart(node, offset);
+    r.collapse(true);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  /** The first place after an item's marker. */
+  function startOf(el) {
+    const kids = [...el.childNodes];
+    const i = kids.findIndex((n) => !(n.nodeType === 1 && n.classList.contains("ms-marker")));
+    if (i >= 0 && kids[i].nodeType === 3) return [kids[i], 0];
+    return [el, i >= 0 ? i : kids.length];
+  }
+
+  function redraw(section) {
+    if (section) {
+      section.querySelectorAll(".ms-marker").forEach((m) => m.remove());
+      markers();
+    }
+    markDirty();
+  }
+
+  function split(cur, range) {
+    const r = document.createRange();
+    r.setStart(range.startContainer, range.startOffset);
+    const end = ownEnd(cur);
+    if (end) r.setEndBefore(end);
+    else r.setEnd(cur, cur.childNodes.length);
+    const rest = r.extractContents();
+    // A heading goes on as a paragraph; an item or a paragraph as another of its own kind.
+    const tag = /^H\d$/.test(cur.tagName) ? "p" : cur.tagName.toLowerCase();
+    const next = document.createElement(tag);
+    next.append(rest);
+    next.querySelectorAll(".ms-marker").forEach((m) => m.remove());
+    // The nested list follows the words after the caret, so the order on screen holds.
+    for (const l of [...cur.children].filter((c) => LISTS.has(c.tagName))) next.append(l);
+    cur.after(next);
+    setRoot(next);
+    fillEmpty(cur);
+    fillEmpty(next);
+    redraw(cur.closest("section"));
+    caret(...startOf(next));
+  }
+
+  /** Backspace at a block's start. True when the key was handled (or must do nothing). */
+  function merge(cur) {
+    const own = cur.closest("[contenteditable=true]") === cur;
+    if (cur.tagName === "LI" && !cur.previousElementSibling
+        && cur.parentElement.parentElement && cur.parentElement.parentElement.tagName === "LI") {
+      outdent(cur); // the first item of a nested list leaves it, as Shift+Tab would
+      return true;
+    }
+    const prev = cur.previousElementSibling;
+    if (!prev || prev.tagName !== cur.tagName || !["LI", "P"].includes(cur.tagName)) {
+      // The browser's own Backspace here would pull words across roots in its own way.
+      return !own;
+    }
+    const at = ownEnd(prev);
+    if (!hasWords(prev)) prev.querySelectorAll(":scope > br").forEach((b) => b.remove());
+    const mark = document.createTextNode("");
+    prev.insertBefore(mark, at);
+    if (hasWords(cur)) {
+      for (const n of [...cur.childNodes]) {
+        if (n.nodeType === 1 && (n.classList.contains("ms-marker") || LISTS.has(n.tagName))) continue;
+        prev.insertBefore(n, at);
+      }
+    }
+    for (const l of [...cur.children].filter((c) => LISTS.has(c.tagName))) prev.append(l);
+    cur.remove();
+    fillEmpty(prev);
+    redraw(prev.closest("section"));
+    caret(mark, 0);
+    return true;
+  }
+
+  /** Run a move that keeps the caret where it was in the words. */
+  function keep(fn) {
+    const r = getSelection().getRangeAt(0);
+    const node = r.startContainer;
+    const offset = r.startOffset;
+    fn();
+    caret(node, offset);
+  }
+
+  function indent(cur) {
+    const prev = cur.previousElementSibling;
+    if (!prev || prev.tagName !== "LI") return;
+    keep(() => {
+      let list = [...prev.children].reverse().find((c) => LISTS.has(c.tagName));
+      if (!list) {
+        list = document.createElement(cur.parentElement.tagName.toLowerCase());
+        prev.append(list);
+      }
+      list.append(cur);
+      setRoot(cur);
+      redraw(cur.closest("section"));
+    });
+  }
+
+  function outdent(cur) {
+    const list = cur.parentElement;
+    const owner = list.parentElement;
+    if (!owner || owner.tagName !== "LI") return;
+    keep(() => {
+      const after = [];
+      for (let n = cur.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+      if (after.length) {
+        const rest = document.createElement(list.tagName.toLowerCase());
+        rest.append(...after);
+        cur.append(rest);
+      }
+      owner.after(cur);
+      if (!list.children.length) list.remove();
+      setRoot(cur);
+      redraw(cur.closest("section"));
+    });
   }
 
   function onPaste(e) {
